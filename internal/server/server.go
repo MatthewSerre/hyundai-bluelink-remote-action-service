@@ -8,21 +8,20 @@ import (
 	"net"
 	"net/http"
 
-	remote_action_v1 "github.com/MatthewSerre/hyundai-bluelink-protobufs/gen/go/protos/remote_action/v1"
-	remote_actionv1 "github.com/MatthewSerre/hyundai-bluelink-protobufs/gen/go/protos/remote_action/v1"
+	remoteActionV1 "github.com/MatthewSerre/hyundai-bluelink-protobufs/gen/go/protos/remote_action/v1"
 	"google.golang.org/grpc"
 )
 
 var addr string = "0.0.0.0:50053"
 
 type Server struct {
-	remote_actionv1.RemoteActionServiceServer
+	remoteActionV1.RemoteActionServiceServer
 }
 
 type Auth struct {
 	Username   string
 	PIN        string
-	JWT_Token  string
+	JWTToken  string
 }
 
 type Vehicle struct {
@@ -34,47 +33,47 @@ type Vehicle struct {
 type RemoteActionResponse struct {
 	Result string
 	FailMsg string
-	// ResponseString *remote_actionv1.ResponseString
-	ResponseString string
+	// this appears be a string, which makes sense given the name, but some other implementations I reviewed had it as an object; need to test more
+	ResponseString string 
 }
 
 func main() {
 	lis, err := net.Listen("tcp", addr)
 
 	if err != nil {
-		log.Fatalf("Failed to listen on: %v\n", err)
+		log.Fatalf("failed to listen on: %v\n", err)
 	}
 
-	log.Printf("Listening on %s\n", addr)
+	log.Printf("remote action server listening on %s\n", addr)
 
 	s := grpc.NewServer()
-	remote_actionv1.RegisterRemoteActionServiceServer(s, &Server{})
+	remoteActionV1.RegisterRemoteActionServiceServer(s, &Server{})
 
 	if err = s.Serve(lis); err != nil {
-		log.Fatalf("Failed to serve: %v\n", err)
+		log.Fatalf("failed to serve: %v\n", err)
 	}
 }
 
-func (s *Server) ToggleLock(context context.Context, request *remote_actionv1.ToggleLockRequest) (*remote_actionv1.RemoteActionResponse, error) {
-	log.Println("Processing toggle lock request...")
+func (s *Server) ToggleLock(context context.Context, request *remoteActionV1.ToggleLockRequest) (*remoteActionV1.RemoteActionResponse, error) {
+	log.Println("processing toggle lock request")
 
 	res, err := toggleLock(
-		Auth{Username: request.Username, JWT_Token: request.JwtToken, PIN: request.Pin},
+		Auth{Username: request.Username, JWTToken: request.JwtToken, PIN: request.Pin},
 		Vehicle{RegistrationID: request.RegistrationId, VIN: request.Vin, Generation: request.Generation},
 		request.LockAction,
 	)
 
 	if err != nil {
 		log.Println("error toggling lock status:", err)
-		return &remote_actionv1.RemoteActionResponse{}, err
+		return &remoteActionV1.RemoteActionResponse{}, err
 	}
 
-	log.Println("Toggle lock request processed successfully!")
+	log.Println("toggle lock request processed successfully")
 
 	log.Printf("%v\n", res.ResponseString)
 
-	var x *remote_actionv1.ResponseString
-	x = &remote_actionv1.ResponseString{
+	var x *remoteActionV1.ResponseString
+	x = &remoteActionV1.ResponseString{
 		ErrorSubCode: "res.ResponseString.ErrorSubCode",
 		SystemName: "res.ResponseString.SystemName",
 		FunctionName: "res.ResponseString.FunctionName",
@@ -89,14 +88,23 @@ func (s *Server) ToggleLock(context context.Context, request *remote_actionv1.To
 		// ServiceName: res.ResponseString.ServiceName,
 	}
 
-	return &remote_actionv1.RemoteActionResponse{
+	return &remoteActionV1.RemoteActionResponse{
 		Result: res.Result,
 		FailMsg: res.FailMsg,
 		ResponseString: x,
 	}, nil
 }
 
-func toggleLock(auth Auth, vehicle Vehicle, lockAction remote_action_v1.LockAction) (RemoteActionResponse, error) {
+func toggleLock(auth Auth, vehicle Vehicle, lockAction remoteActionV1.LockAction) (RemoteActionResponse, error) {
+	var lockActionString string;
+
+	switch lockAction {
+	case remoteActionV1.LockAction_LOCK_ACTION_LOCK:
+		lockActionString = "remotelock"
+	case remoteActionV1.LockAction_LOCK_ACTION_UNLOCK:
+		lockActionString = "remoteunlock"
+	}
+
 	req, err := http.NewRequest("POST", "https://owners.hyundaiusa.com/bin/common/remoteAction", nil)
 	if err != nil {
 		log.Println("error initiating remote action req: ", err)
@@ -105,25 +113,15 @@ func toggleLock(auth Auth, vehicle Vehicle, lockAction remote_action_v1.LockActi
 	setReqHeaders(req, auth)
 	q := req.URL.Query()
 	q.Add("username", auth.Username)
-	q.Add("token", auth.JWT_Token)
-
-	var lockActionString string;
-
-	switch lockAction {
-	case remote_action_v1.LockAction_LOCK_ACTION_LOCK:
-		lockActionString = "remotelock"
-	case remote_action_v1.LockAction_LOCK_ACTION_UNLOCK:
-		lockActionString = "remoteunlock"
-	}
-
-	if lockActionString == "remoteunlock" {
-		q.Add("pin", auth.PIN)
-	}
+	q.Add("token", auth.JWTToken)
 	q.Add("service", lockActionString)
 	q.Add("url", "https://owners.hyundaiusa.com/us/en/page/blue-link.html")
 	q.Add("regId", vehicle.RegistrationID)
 	q.Add("vin", vehicle.VIN)
 	q.Add("gen", vehicle.Generation)
+	if lockActionString == "remoteunlock" {
+		q.Add("pin", auth.PIN)
+	}
 	req.URL.RawQuery = q.Encode()
 
 	resp, err := http.DefaultClient.Do(req)
@@ -161,5 +159,5 @@ func setReqHeaders(req *http.Request, auth Auth) {
 	req.Header.Add("Host", "owners.hyundaiusa.com")
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
 	req.Header.Add("Origin", "https://owners.hyundaiusa.com")
-	req.Header.Add("Cookie", "jwt_token=" + auth.JWT_Token + "; s_name=" + auth.Username)
+	req.Header.Add("Cookie", "JWTToken=" + auth.JWTToken + "; s_name=" + auth.Username)
 }
