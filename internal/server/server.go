@@ -33,8 +33,7 @@ type Vehicle struct {
 type RemoteActionResponse struct {
 	Result string
 	FailMsg string
-	// this appears be a string, which makes sense given the name, but some other implementations I reviewed had it as an object; need to test more
-	ResponseString string 
+	ResponseString interface{}
 }
 
 func main() {
@@ -55,56 +54,53 @@ func main() {
 }
 
 func (s *Server) ToggleLock(context context.Context, request *remoteActionV1.ToggleLockRequest) (*remoteActionV1.RemoteActionResponse, error) {
-	log.Println("processing toggle lock request")
-
-	res, err := toggleLock(
-		Auth{Username: request.Username, JWTToken: request.JwtToken, PIN: request.Pin},
-		Vehicle{RegistrationID: request.RegistrationId, VIN: request.Vin, Generation: request.Generation},
-		request.LockAction,
-	)
-
-	if err != nil {
-		log.Println("error toggling lock status:", err)
-		return &remoteActionV1.RemoteActionResponse{}, err
-	}
-
-	log.Println("toggle lock request processed successfully")
-
-	log.Printf("%v\n", res.ResponseString)
-
-	var x *remoteActionV1.ResponseString
-	x = &remoteActionV1.ResponseString{
-		ErrorSubCode: "res.ResponseString.ErrorSubCode",
-		SystemName: "res.ResponseString.SystemName",
-		FunctionName: "res.ResponseString.FunctionName",
-		ErrorMessage: "res.ResponseString.ErrorMessage",
-		ErrorCode: 0,
-		ServiceName: "res.ResponseString.ServiceName",
-		// ErrorSubCode: res.ResponseString.ErrorSubCode,
-		// SystemName: res.ResponseString.SystemName,
-		// FunctionName: res.ResponseString.FunctionName,
-		// ErrorMessage: res.ResponseString.ErrorMessage,
-		// ErrorCode: res.ResponseString.ErrorCode,
-		// ServiceName: res.ResponseString.ServiceName,
-	}
-
-	return &remoteActionV1.RemoteActionResponse{
-		Result: res.Result,
-		FailMsg: res.FailMsg,
-		ResponseString: x,
-	}, nil
-}
-
-func toggleLock(auth Auth, vehicle Vehicle, lockAction remoteActionV1.LockAction) (RemoteActionResponse, error) {
 	var lockActionString string;
 
-	switch lockAction {
+	switch request.LockAction {
 	case remoteActionV1.LockAction_LOCK_ACTION_LOCK:
 		lockActionString = "remotelock"
 	case remoteActionV1.LockAction_LOCK_ACTION_UNLOCK:
 		lockActionString = "remoteunlock"
 	}
 
+	log.Printf("processing %v request", lockActionString)
+
+	res, err := toggleLock(
+		Auth{Username: request.Username, JWTToken: request.JwtToken, PIN: request.Pin},
+		Vehicle{RegistrationID: request.RegistrationId, VIN: request.Vin, Generation: request.Generation},
+		lockActionString,
+	)
+
+	if err != nil {
+		log.Printf("failed to toggle lock with error: %v", err)
+		return &remoteActionV1.RemoteActionResponse{}, err
+	}
+
+	log.Printf("%v request processed successfully", lockActionString)
+
+	if obj, ok := res.ResponseString.(*remoteActionV1.ResponseString); ok {
+		return &remoteActionV1.RemoteActionResponse{
+			Result: res.Result,
+			FailMsg: res.FailMsg,
+			ResponseString: obj,
+		}, nil
+	} else {
+		return &remoteActionV1.RemoteActionResponse{
+			Result: res.Result,
+			FailMsg: res.FailMsg,
+			ResponseString: &remoteActionV1.ResponseString{
+				ErrorSubCode: "",
+				SystemName: "",
+				FunctionName: "",
+				ErrorMessage: "",
+				ErrorCode: 0,
+				ServiceName: "",
+			},
+		}, nil
+	}
+}
+
+func toggleLock(auth Auth, vehicle Vehicle, lockAction string) (RemoteActionResponse, error) {
 	req, err := http.NewRequest("POST", "https://owners.hyundaiusa.com/bin/common/remoteAction", nil)
 	if err != nil {
 		log.Println("error initiating remote action req: ", err)
@@ -114,39 +110,35 @@ func toggleLock(auth Auth, vehicle Vehicle, lockAction remoteActionV1.LockAction
 	q := req.URL.Query()
 	q.Add("username", auth.Username)
 	q.Add("token", auth.JWTToken)
-	q.Add("service", lockActionString)
+	q.Add("service", lockAction)
 	q.Add("url", "https://owners.hyundaiusa.com/us/en/page/blue-link.html")
 	q.Add("regId", vehicle.RegistrationID)
 	q.Add("vin", vehicle.VIN)
 	q.Add("gen", vehicle.Generation)
-	if lockActionString == "remoteunlock" {
+	if lockAction == "remoteunlock" {
 		q.Add("pin", auth.PIN)
 	}
 	req.URL.RawQuery = q.Encode()
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		log.Println("Error creating remote lock req: ", err)
+		log.Printf("failed to create request with error: %v", err)
 		return RemoteActionResponse{}, err
 	}
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
-	log.Printf("%v\n", body)
 	if err != nil {
-		log.Println("Error reading remote lock response: ", err)
-		return RemoteActionResponse{}, err
-	}
-	log.Println("remote lock response: ", string(body))
-	// decode body as json
-	var remote_lock_response RemoteActionResponse
-	err = json.Unmarshal(body, &remote_lock_response)
-	if err != nil {
-		log.Println("error decoding remote lock response: ", err)
+		log.Printf("failed to read response with error: %v", err)
 		return RemoteActionResponse{}, err
 	}
 
-	log.Printf("%v\n", remote_lock_response)
-	return remote_lock_response, nil
+	var r RemoteActionResponse
+	if err := json.Unmarshal([]byte(body), &r); err != nil {
+		log.Printf("failed to decode response with error: %v", err)
+		return RemoteActionResponse{}, err
+	}
+
+	return r, nil
 }
 
 func setReqHeaders(req *http.Request, auth Auth) {
