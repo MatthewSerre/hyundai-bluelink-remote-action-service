@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"io/ioutil"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -126,7 +126,7 @@ func toggleLock(auth Auth, vehicle Vehicle, lockAction string) (RemoteActionResp
 		return RemoteActionResponse{}, err
 	}
 	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Printf("failed to read response with error: %v", err)
 		return RemoteActionResponse{}, err
